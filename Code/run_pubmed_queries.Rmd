@@ -1,0 +1,241 @@
+---
+title: "Scanning pubmed for relevant terms"
+author: "Jose L. Cadavid"
+output: html_notebook
+---
+
+This notebook opens an excel file with query tables and gets pubmed (and PMC) IDs
+of relevant articles in a defined range of dates. It exports text files for the main tables,
+and a consolidated RData file with all tables as a list. Not all queries and parameters are in the excel file,
+but they can be seen in the first couple of chunks of this notebook (i.e. years, add_query)
+
+It relies on the rentrez package and uses custom extra functions for looping and batching dates.
+It also uses a custom api_key (each user should get their own) to allow for more queries in a given
+time span. 
+
+Unfortunately, sometimes the querying functions crash due to excessive calls to the entrez server, so
+this notebook is meant to be run in a chunk-chunk or even line-line basis, as opposed to a single structured loop.
+
+Running the whole thing can take around 1-2 hours. Results are meant to be analyzed in an accompanying notebook.
+
+# Load packages
+
+
+```{r}
+library(readxl)
+library(ggvenn)
+library(xlsx)
+library(scales)
+```
+
+
+# Define query file and output folder
+
+
+```{r}
+# Set directory to current path (opened by the notebook)
+setwd(getwd())
+# Load extra functions - functions for plotting or wrapper functions
+source("extra_functions.R")
+# Set Entrez key
+set_entrez_key(api_key)
+# Define directories - create output directory by hand before running this
+query_file <- "queries.xlsx"
+dir_out <- "Results2023/"
+# Create subdirectories if they don't exist
+sub_dirs <- c("Tables", "Plots", "checkedID")
+for (ii in sub_dirs){
+  if (!dir.exists(paste0(dir_out, ii))){
+    dir.create(paste0(dir_out, ii))
+  }
+}
+  
+
+```
+
+
+# Read queries
+
+We perform a query for each term, even though in the end we will only care about 
+intersections with tissue eng. This is done on purpose to get an idea of the magnitude of 
+each field and to get trends in time, but we could simple get the intersections directly and save time.
+We could also save time by not querying year-by-year, but then we wouldn't get
+trend info which might come in handy.
+
+We query with and without disease terms to get a broader idea of the field, but we
+ultimately focus on disease. 
+
+```{r}
+# As a test one can put # in the queries to be ignored in the text file
+# Get systems biology and modelling query terms
+my_query_SB <- read_excel(query_file, sheet = "Modeling") %>% filter(!grepl("#", term))
+# Get tissue engineering and in vitro models query terms
+my_query_TE <- read_excel(query_file, sheet = "TissueEng") %>% filter(!grepl("#", term))
+# Get omic and high throughput measurement terms
+my_query_Omic <- read_excel(query_file, sheet = "Method") %>% filter(!grepl("#", term))
+
+# Define query terms to specify disease states (the infix function %+% is a shorthand for paste0 that 
+# concatenates a long multiline string (to make it easier to read the long query)
+query_disease <- "disease OR diseases OR diseased OR " %+%
+                  "pathology OR pathologies OR pathologic OR pathological OR " %+%
+                  "pathophysiology OR pathophysiologies OR " %+% 
+                  "cancer OR cancers OR carcinoma OR carcinomas OR neoplasm OR neoplasms"
+# Common terms or restrictions to add to all queries. Exclude no abstract, reviews, etc
+add_query_general <- "hasabstract AND eng[lang] NOT (review[pt] OR comment[pt] OR editorial[pt] " %+%
+                      "OR systematic-review[pt] OR case-study[pt])"
+# Add query terms for disease states
+add_query_disease <- paste0('(', query_disease, ') AND (', add_query_general,')')
+
+# PMC doesn't filter by publication type or language like pubmed, but it allows 
+# excluding retracted papers from search. We enforce having an abstract to reduce trash
+add_query_general_PMC <- '"has abstract"[filter] NOT "is retracted"[filter]'
+add_query_disease_PMC <- paste0('(', query_disease, ') AND (', add_query_general_PMC, ')')
+
+# Define year range to look for papers 
+years <- 1990:2023
+
+# Initialize list of tables: This will reduce the number of variables in the workspace
+tables <- NULL
+
+```
+
+# Query PUBMED and PMC
+
+## Get PUBMED query tables for each category
+
+The function will internally save the full table, as well as a subsample table with 30 
+papers from each category to be double-checked manually as a way of doing QC on the queries. 
+Suffix ".txt" added internally to file name.
+Note: We could put everything in a loop to make code concise by this way it's maybe more readable and each query can be checked independently at will (especially since the querying tends to crash once in a while)
+
+```{r}
+# Get general queries (not specifying cancer or disease)
+tables[["SB_gen"]] <- get_queries_range(my_query_SB, add_query_general, years,
+                                      data_base = "pubmed", "Tables/table_SB_general", 
+                                      n_subsample = 30, dir_out = dir_out)
+tables[["TE_gen"]] <- get_queries_range(my_query_TE, add_query_general, years, 
+                                      data_base = "pubmed", "Tables/table_TE_general", 
+                                      n_subsample = 30, dir_out = dir_out)
+tables[["Omic_gen"]] <- get_queries_range(my_query_Omic, add_query_general, years, 
+                                        data_base = "pubmed", "Tables/table_Omic_general", 
+                                        n_subsample = 30, dir_out = dir_out)
+
+# Get queries specific to disease by adding extra terms to query
+tables[["SB_dis"]] <- get_queries_range(my_query_SB, add_query_disease, years, 
+                                      data_base = "pubmed", "Tables/table_SB_disease", 
+                                      n_subsample = 30, dir_out = dir_out)
+tables[["TE_dis"]] <- get_queries_range(my_query_TE, add_query_disease, years, 
+                                      data_base = "pubmed", "Tables/table_TE_disease", 
+                                      n_subsample = 30, dir_out = dir_out)
+tables[["Omic_dis"]] <- get_queries_range(my_query_Omic, add_query_disease, years, 
+                                        data_base = "pubmed", "Tables/table_Omic_disease", 
+                                        n_subsample = 30, dir_out = dir_out)
+
+
+#tables[["Omic_dis"]] <- rio::import(paste0(dir_out, "/Tables/table_Omic_disease.txt"))
+
+```
+
+
+## Get PMC query tables for each category
+
+PMC has some full manuscripts so the query can dig deeper into the paper. 
+Ideally we would only parse the "methods" section, but the entrez utility doesn't 
+do that. For now, we get a full query (remove [tiab] fields from query and change 
+for [article]) and we clean afterwards. The [article] field does NOT query the abstracts
+but abstracts are queryied by the PMID search.
+
+```{r}
+# Get general queries (not specifying cancer or disease)
+tables[["SB_gen_PMC"]] <- get_queries_range(my_query_SB, add_query_general_PMC, years, 
+                                          data_base = "pmc", "Tables/table_SB_general_PMC", 
+                                          n_subsample = 30, dir_out = dir_out)
+tables[["TE_gen_PMC"]] <- get_queries_range(my_query_TE, add_query_general_PMC, years, 
+                                          data_base = "pmc","Tables/table_TE_general_PMC", 
+                                          n_subsample = 30, dir_out = dir_out)
+tables[["Omic_gen_PMC"]] <- get_queries_range(my_query_Omic, add_query_general_PMC, 
+                                            years, data_base = "pmc","Tables/table_Omic_general_PMC", 
+                                            n_subsample = 30, dir_out = dir_out)
+
+# Get queries specific to disease by adding extra terms
+tables[["SB_dis_PMC"]] <- get_queries_range(my_query_SB, add_query_disease_PMC, years, 
+                                          data_base = "pmc","Tables/table_SB_disease_PMC", 
+                                          n_subsample = 30, dir_out = dir_out)
+tables[["TE_dis_PMC"]] <- get_queries_range(my_query_TE, add_query_disease_PMC, years, 
+                                          data_base = "pmc","Tables/table_TE_disease_PMC", 
+                                          n_subsample = 30, dir_out = dir_out)
+tables[["Omic_dis_PMC"]] <- get_queries_range(my_query_Omic, add_query_disease_PMC, 
+                                            years, data_base = "pmc","Tables/table_Omic_disease_PMC", 
+                                            n_subsample = 30, dir_out = dir_out)
+
+# Save object!
+saveRDS(tables, file = paste0(dir_out, "query_tables.rds"), compress = TRUE, refhook = NULL)
+
+```
+
+
+## Check if PMIDs or PMCs are associated with other terms
+
+This part is to see how many papers are indexed as tissue eng or systems bio, or
+contain those keywords somewhere. The idea is to show how these fuzzy terms can miss
+important work when just querying with them.
+
+It's faster to just get a huge list of PMIDs of each category and see if they 
+intersect with what we retrieved before, than querying each PMID and double-check it.
+
+Also check for papers associated with cell-cell communication, and for queries 
+associated with co-cultures (or multi-cultures)
+
+```{r}
+my_query_extra <- read_excel(query_file, sheet = "Extra") %>% filter(!grepl("#", term))
+
+
+tables[["PMID_extra"]] <- get_queries_range(my_query_extra, 
+                                            add_query_general, 
+                                            years, 
+                                            data_base = "pubmed")
+
+
+tables[["PMC_extra"]] <- get_queries_range(my_query_extra %>% 
+                                             mutate(term = str_replace_all(term, "tiab", "abstract")), 
+                                          add_query_general_PMC, years, 
+                                          data_base = "pmc")
+
+# Save object!
+saveRDS(tables, file = paste0(dir_out, "query_tables"), compress = TRUE, refhook = NULL)
+```
+
+Unused: queries for papers citing TCGA - Not fixed for updated functions
+
+```{r}
+
+# Query papers that cite TCGA as a resource
+PMID_TCGA <- get_IDs_batched(query = paste0("(TCGA[tiab] OR cancer-genome-atlas[tiab])", 
+                                           ' AND (', add_query_general, ') AND (', 
+                                            years[1],':', tail(years,1), '[pdat])'), 
+                                   data_base = "pubmed")
+
+PMC_TCGA <- get_IDs_batched(query = paste0("(TCGA[article] OR cancer-genome-atlas[article])", 
+                                           ' AND (', add_query_general_PMC, ') AND (', 
+                                            years[1],':', tail(years,1), '[pdat])'), 
+                                   data_base = "pmc")
+
+# Store
+tables[["PMID_TCGA"]] <- PMID_TCGA
+tables[["PMC_TCGA"]] <- PMC_TCGA
+
+# Check papers that have "disease model" and "in vitro" in pubmed abstracts
+query_dis_model <- '((disease-model[tiab] OR disease-models[tiab] OR disease-modeling[tiab]) AND "in vitro"[tiab])'
+PMID_disease_model <- get_IDs_batched(query = paste0(query_dis_model, 
+                                           ' AND (', add_query_general, ') AND (', 
+                                            years[1],':', tail(years,1), '[pdat])'), 
+                                   data_base = "pubmed")
+
+tables[["PMID_disease_model"]] <- PMID_disease_model
+
+
+# Save object!
+saveRDS(tables, file = paste0(dir_out, "query_tables"), compress = TRUE, refhook = NULL)
+
+```
+
