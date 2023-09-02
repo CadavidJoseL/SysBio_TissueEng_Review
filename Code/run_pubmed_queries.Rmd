@@ -1,47 +1,39 @@
 ---
-title: "Scanning pubmed for relevant terms"
+title: "Querying PUBMED based on a structured list of terms"
 author: "Jose L. Cadavid"
 output: html_notebook
 ---
 
 This notebook opens an excel file with query tables and gets pubmed (and PMC) IDs
-of relevant articles in a defined range of dates. It exports text files for the main tables,
-and a consolidated RData file with all tables as a list. Not all queries and parameters are in the excel file,
-but they can be seen in the first couple of chunks of this notebook (i.e. years, add_query)
+of relevant articles within a defined range of dates. It exports text files for 
+the main tables,and a consolidated RData file with all tables as a list. 
+Not all queries and parameters are in the excel file, but they can be seen in the first couple of chunks of this notebook (i.e. years, add_query)
 
-It relies on the rentrez package and uses custom extra functions for looping and batching dates.
-It also uses a custom api_key (each user should get their own) to allow for more queries in a given
-time span. 
+The functions rely on the rentrez package and uses custom extra functions for looping and batching dates.
+It also uses a custom api_key to allow for more frequent queries. Users of this notebook
+can get their own key [here](https://ncbiinsights.ncbi.nlm.nih.gov/2017/11/02/new-api-keys-for-the-e-utilities/)
 
 Unfortunately, sometimes the querying functions crash due to excessive calls to the entrez server, so
-this notebook is meant to be run in a chunk-chunk or even line-line basis, as opposed to a single structured loop.
+this notebook is meant to be run in a chunk-chunk or even line-line basis, as opposed to all at once.
 
 Running the whole thing can take around 1-2 hours. Results are meant to be analyzed in an accompanying notebook.
 
-# Load packages
-
+# Load packages and extra functions
 
 ```{r}
-library(readxl)
-library(ggvenn)
-library(xlsx)
-library(scales)
+library(readxl, quietly = T)
+library(scales, quietly = T)
 ```
 
 
 # Define query file and output folder
 
-
 ```{r}
-# Set directory to current path (opened by the notebook)
 setwd(getwd())
-# Load extra functions - functions for plotting or wrapper functions
 source("extra_functions.R")
-# Set Entrez key
-set_entrez_key(api_key)
-# Define directories - create output directory by hand before running this
-query_file <- "queries.xlsx"
-dir_out <- "Results2023/"
+# Define directories
+query_file <- "../Data/queries.xlsx"
+dir_out <- "../Results/"
 # Create subdirectories if they don't exist
 sub_dirs <- c("Tables", "Plots", "checkedID")
 for (ii in sub_dirs){
@@ -49,21 +41,16 @@ for (ii in sub_dirs){
     dir.create(paste0(dir_out, ii))
   }
 }
-  
-
 ```
 
 
 # Read queries
 
 We perform a query for each term, even though in the end we will only care about 
-intersections with tissue eng. This is done on purpose to get an idea of the magnitude of 
-each field and to get trends in time, but we could simple get the intersections directly and save time.
-We could also save time by not querying year-by-year, but then we wouldn't get
-trend info which might come in handy.
-
-We query with and without disease terms to get a broader idea of the field, but we
-ultimately focus on disease. 
+intersections with tissue engineering. This is done on purpose to get an idea of the magnitude of 
+each field and to get trends in time, but we could simply get the intersections directly 
+and save time. We could also save time by not querying year-by-year, but then we wouldn't get
+trend info which might come in handy. We query with and without disease terms to get a broader idea of the field, but we ultimately focus on disease. 
 
 ```{r}
 # As a test one can put # in the queries to be ignored in the text file
@@ -93,11 +80,10 @@ add_query_disease_PMC <- paste0('(', query_disease, ') AND (', add_query_general
 
 # Define year range to look for papers 
 years <- 1990:2023
-
-# Initialize list of tables: This will reduce the number of variables in the workspace
+# Initialize list of tables
 tables <- NULL
-
 ```
+
 
 # Query PUBMED and PMC
 
@@ -130,10 +116,8 @@ tables[["TE_dis"]] <- get_queries_range(my_query_TE, add_query_disease, years,
 tables[["Omic_dis"]] <- get_queries_range(my_query_Omic, add_query_disease, years, 
                                         data_base = "pubmed", "Tables/table_Omic_disease", 
                                         n_subsample = 30, dir_out = dir_out)
-
-
-#tables[["Omic_dis"]] <- rio::import(paste0(dir_out, "/Tables/table_Omic_disease.txt"))
-
+# Save object!
+saveRDS(tables, file = paste0(dir_out, "query_tables.rds"), compress = TRUE, refhook = NULL)
 ```
 
 
@@ -167,10 +151,8 @@ tables[["TE_dis_PMC"]] <- get_queries_range(my_query_TE, add_query_disease_PMC, 
 tables[["Omic_dis_PMC"]] <- get_queries_range(my_query_Omic, add_query_disease_PMC, 
                                             years, data_base = "pmc","Tables/table_Omic_disease_PMC", 
                                             n_subsample = 30, dir_out = dir_out)
-
 # Save object!
 saveRDS(tables, file = paste0(dir_out, "query_tables.rds"), compress = TRUE, refhook = NULL)
-
 ```
 
 
@@ -189,7 +171,6 @@ associated with co-cultures (or multi-cultures)
 ```{r}
 my_query_extra <- read_excel(query_file, sheet = "Extra") %>% filter(!grepl("#", term))
 
-
 tables[["PMID_extra"]] <- get_queries_range(my_query_extra, 
                                             add_query_general, 
                                             years, 
@@ -202,40 +183,5 @@ tables[["PMC_extra"]] <- get_queries_range(my_query_extra %>%
                                           data_base = "pmc")
 
 # Save object!
-saveRDS(tables, file = paste0(dir_out, "query_tables"), compress = TRUE, refhook = NULL)
+saveRDS(tables, file = paste0(dir_out, "query_tables.rds"), compress = TRUE, refhook = NULL)
 ```
-
-Unused: queries for papers citing TCGA - Not fixed for updated functions
-
-```{r}
-
-# Query papers that cite TCGA as a resource
-PMID_TCGA <- get_IDs_batched(query = paste0("(TCGA[tiab] OR cancer-genome-atlas[tiab])", 
-                                           ' AND (', add_query_general, ') AND (', 
-                                            years[1],':', tail(years,1), '[pdat])'), 
-                                   data_base = "pubmed")
-
-PMC_TCGA <- get_IDs_batched(query = paste0("(TCGA[article] OR cancer-genome-atlas[article])", 
-                                           ' AND (', add_query_general_PMC, ') AND (', 
-                                            years[1],':', tail(years,1), '[pdat])'), 
-                                   data_base = "pmc")
-
-# Store
-tables[["PMID_TCGA"]] <- PMID_TCGA
-tables[["PMC_TCGA"]] <- PMC_TCGA
-
-# Check papers that have "disease model" and "in vitro" in pubmed abstracts
-query_dis_model <- '((disease-model[tiab] OR disease-models[tiab] OR disease-modeling[tiab]) AND "in vitro"[tiab])'
-PMID_disease_model <- get_IDs_batched(query = paste0(query_dis_model, 
-                                           ' AND (', add_query_general, ') AND (', 
-                                            years[1],':', tail(years,1), '[pdat])'), 
-                                   data_base = "pubmed")
-
-tables[["PMID_disease_model"]] <- PMID_disease_model
-
-
-# Save object!
-saveRDS(tables, file = paste0(dir_out, "query_tables"), compress = TRUE, refhook = NULL)
-
-```
-
