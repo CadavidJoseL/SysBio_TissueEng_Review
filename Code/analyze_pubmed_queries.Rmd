@@ -8,61 +8,26 @@ This notebook loads tables of pubmed IDs that come from multiple queries perform
 in the "run_pubmed_queries" notebook. Most of the chunks can be run fully automatically,
 except the last few where user input is needed when looking at article titles and abstracts.
 
-
 # Load packages
 
 ```{r}
-library(readxl)
-library(ggvenn)
-library(xlsx)
-library(scales)
+library(readxl, quietly = T)
+library(scales, quietly = T)
 ```
 
 # Load data
 
 Define directory where files are contained and run extra functions for plotting and so on.
 
-Note: Query tables last updated April 26, 2023
+Note: Query tables last updated September, 2023
 
 ```{r}
-# Load extra functions - functions for plotting or wrapper functions
+setwd("E:/Jose Luis/Documents/GitHub/SysBio_TissueEng_Review/Code")
 source("extra_functions.R")
-# Set Entrez key
-set_entrez_key(api_key)
-# Define directories - create output directory by hand before running this
-query_file <- "queries.xlsx"
-dir_out <- "Results2023/"
+# Define directories
+query_file <- "../Data/queries.xlsx"
+dir_out <- "../Results/"
 tables <- readRDS(file = paste0(dir_out, "query_tables.rds"))
-```
-
-## Intersect categories
-
-For all unique PMID and PMC retrieved from the initial queries, see if they are also in the 
-tissue eng, systems bio, or cell-cell categories
-
-THIS PART IS NOT NECESSARY. MODIFY
-
-```{r}
-
-# Get unique PMIDs retrieved (ALL of them) and whether they are in the SB or TE categories
-PMID_unique <- c(tables$SB_gen$PMID, 
-                     tables$TE_gen$PMID, 
-                     tables$Omic_gen$PMID) %>% unique()
-
-PMID_unique <- data.frame(PMID = PMID_unique, 
-                          is.sys_bio = PMID_unique %in% PMID_systems_bio, 
-                          is.tissue_eng = PMID_unique %in% PMID_tissue_eng,
-                          is.cell_cell = PMID_unique %in% PMID_cell_cell)
-# Now PMC
-PMC_unique <- c(tables$SB_gen_PMC$PMC, 
-                     tables$TE_gen_PMC$PMC, 
-                     tables$Omic_gen_PMC$PMC) %>% unique()
-
-PMC_unique <- data.frame(PMC = PMC_unique, 
-                          is.sys_bio = PMC_unique %in% PMC_systems_bio, 
-                          is.tissue_eng = PMC_unique %in% PMC_tissue_eng,
-                          is.cell_cell = PMC_unique %in% PMC_cell_cell)
-
 ```
 
 ## Intersect PMID categories
@@ -112,16 +77,18 @@ and read it every time so that we don't re-make it if we change queries, but we
 just update it with new PMC-PMID. The dictionary is saved during each batch
 
 ```{r}
-# Create dictionary
+# Load tables
+tables_mixed <- readRDS(paste0(dir_out, "query_tables_mixed.rds"))
+# Get PMC - PMID dictionary
 dictionary <- get_PMID_PMC_batched(c(tables_mixed[["TE_SB_gen_PMC"]]$PMC,
-                                     tables_mixed[["TE_Omic_gen_PMC"]]$PMC,
-                                     tables[["PMC_extra"]]$PMC) %>% 
-                                     unique(),
+                                   tables_mixed[["TE_Omic_gen_PMC"]]$PMC,
+                                   tables[["PMC_extra"]]$PMC) %>% 
+                                   unique(),
                                    do.clean = T,
-                                   save_name = paste0(dir_out,"dictionary.txt"))
+                                   save_name = "../Data/dictionary.txt")
 
-dictionary <- read.table(paste0(dir_out,"dictionary.txt"), header = T)
-
+# Or load directly
+dictionary <- read.table("../Data/dictionary.txt", header = T, sep = "\t")
 
 # Apply dictionary to intersections - this adds a PMID and gets rid of reviews and other junk
 tables_mixed[["TE_SB_gen_PMC"]] <- merge(tables_mixed[["TE_SB_gen_PMC"]], dictionary, by = "PMC")
@@ -130,14 +97,14 @@ tables_mixed[["TE_SB_dis_PMC"]] <- merge(tables_mixed[["TE_SB_dis_PMC"]], dictio
 tables_mixed[["TE_Omic_dis_PMC"]] <- merge(tables_mixed[["TE_Omic_dis_PMC"]], dictionary, by = "PMC")
 
 # Get intersection of the three
-tables_mixed[["all_gen_PMC"]] <- merge(tables_mixed[["TE_SB_gen_PMC"]], tables_mixed[["TE_Omic_gen_PMC"]], 
-                                 by = c("PMC", "PMID", "year", "category.x"))
+tables_mixed[["all_gen_PMC"]] <- merge(tables_mixed[["TE_SB_gen_PMC"]],
+                                       tables_mixed[["TE_Omic_gen_PMC"]], 
+                                       by = c("PMC", "PMID", "year", "category.x"))
 colnames(tables_mixed[["all_gen_PMC"]]) <- c("PMC", "PMID", "year", "TE", "SB", "Omic")
 # Translate extra PMC queries and store
 tables[["PMC_extra"]] <- merge(tables[["PMC_extra"]], dictionary, by = "PMC")
 # Save tables
 saveRDS(tables_mixed, file = paste0(dir_out, "query_tables_mixed.rds"), compress = TRUE, refhook = NULL)
-
 ```
 
 # Verify queries
@@ -153,11 +120,9 @@ We can re-read data here to skip all of the chunks above
 tables_mixed <- readRDS(file = paste0(dir_out, "query_tables_mixed.rds"))
 ```
 
-
 Also, some review papers are not indexed as "review" in pubmed so they don't get
 filtered out. As a flag, we can check if the papers have the term "review" in the 
 abstract.
-
 
 ```{r}
 # Do in chunks of 50 (although internally stuff is saved every 10 prompts)
@@ -187,44 +152,22 @@ verify_titles(tables_mixed[["TE_SB_gen"]]$PMID %>% unique(),
 
 Now check IDs retrieved from intersecting systems-bio and tissue-eng mesh headers.
 Some of these might have been checked in the previous two chunks, so we load those
-pre-checked files. PMC need to be translated to PMID, but we already have a dictionary 
-for those that will exclude reviews and other junk.
+pre-checked files. PMC retrieves too many non-specific hits, so exclude
 
 ```{r}
 # Do in chunks of 50 (although internally stuff is saved every 10 prompts)
-extra_all_gen_unique <- verify_titles(tables[["extra_IDs"]]$PMID %>% unique(),
+IDs <- tables[["PMID_extra"]]$PMID %>% unique()
+IDs <- setdiff(IDs, 
+               c(tables_mixed[["all_gen_PMC"]]$PMID, 
+                 tables_mixed[["all_gen"]]$PMID, 
+                 tables_mixed[["TE_SB_gen"]]$PMID))
+
+extra_all_gen_unique <- verify_titles(IDs,
                       file_prechecked =  paste0(dir_out,"checkedID/extra_all_unique_checked.txt"),
                       file_store = paste0(dir_out,"checkedID/extra_all_unique_checked.txt"),
                       batch_size = 50)
 
 ```
-Now check IDs that are related to co-cultures or cell-cell comm. Not lumping
-with the other extra_IDs since co-culture or cell-cell is using different categories
-and intersecting with the tisse eng and SB categories. Not looking at the intersection
-between TE, Omic and SB, rather intersections of co-cultures and cell-cell to understand
-the extent at which co-cultures are discussed. Only for PMID since we already have a long list 
-of references to go through
-
-NOT UPDATED
-
-```{r}
-
-coculture_all_gen_unique <- verify_titles(tables$PMID_co[tables$PMID_co %in% 
-                                                           union(tables$TE_SB_gen$PMID, tables$TE_Omic_gen$PMID)] ,
-                      file_prechecked =  paste0(dir_out,"checkedID/coculture_unique_checked.txt"),
-                      file_store = paste0(dir_out,"checkedID/coculture_unique_checked.txt"),
-                      batch_size = 50)
-
-cellcell_all_gen_unique <- verify_titles(tables$PMID_cell_cell[tables$PMID_cell_cell %in% 
-                                                           union(tables$TE_SB_gen$PMID, tables$TE_Omic_gen$PMID)] ,
-                      file_prechecked =  paste0(dir_out,"checkedID/cellcell_unique_checked.txt"),
-                      file_store = paste0(dir_out,"checkedID/cellcell_unique_checked.txt"),
-                      batch_size = 50)
-
-
-```
-
-
 Concatenate the selected PMIDs and export to text file. Then, paste to excel manually and 
 double-check papers for relevance
 
@@ -237,53 +180,19 @@ rbind(filter(PMID_all_gen_unique, is.good == "y" & is.review == FALSE),
       filter(PMC_all_gen_unique, is.good == "y" & is.review == FALSE),
       filter(extra_all_gen_unique, is.good == "y" & is.review == FALSE)) %>%
   write.table(paste0(dir_out,'PMID_to_check.txt'), col.names = F, row.names = F, quote = F, sep = "\t")
-
-
 ```
-
-
 
 # Analyze and clean results
-
-## Get trends
-
-Using the info from the years to get counts of papers per category. We eliminate duplicates
-within each category to keep the first publication date (some papers show up twice), then summarize 
-counts and plot. Using a wrapper function.
-
-UNFINISHED
-
-```{r}
-# Initialize list for results
-results <- NULL
-
-# Plot trends separated by query category
-results[["trend_TE_gen"]] <- plot_trends(tables$TE_gen, var_group2 = "category")
-results[["trend_SB_gen"]] <- plot_trends(tables$SB_gen, var_group2 = "category")
-results[["trend_Omic_gen"]] <- plot_trends(tables$Omic_gen, var_group2 = "category")
-
-# Trends of overlaps
-results[["trend_TE_SB_gen"]] <- plot_trends(tables$TE_SB_gen)
-results[["trend_TE_Omic_gen"]] <- plot_trends(tables$TE_Omic_gen)
-
-
-
-```
-
 
 ## Get overlaps for PMID
 
 Clean up the categories for math models a bit. Lump together diff eqs, dynamic models
 and PK models since they are all based on differential equations. For the category "mathematical models",
-exclude all IDs that are in another category to reduce overlaps since this category is non-specific.
-
-Lump hydrogels into engineered tissue models
-
-This could be done from the start by combining queries but the queries are already too long!
-
-Making a tiny function to avoid repeating code
+exclude all IDs that are in another category to reduce overlaps since this category is non-specific. 
+Lump hydrogels into engineered tissue models. This could be done from the start by combining queries but the queries are already too long!
 
 ```{r}
+# Making a tiny function to avoid repeating code
 clean_SB_table <- function(table){
   old_ID <- colnames(table)[3]
   colnames(table)[3] <- "ID"
@@ -313,9 +222,7 @@ clean_TE_table <- function(table){
 
 ```
 
-
-
-Producing a list of plots. The following chunks actually save the plots
+Producing a list of plots. These wrapper functions save the plots
 
 ```{r}
 # Get overlaps between categories
@@ -339,6 +246,7 @@ overlaps_dis_PMC <- get_queries_overlap_lists(list(TE = clean_TE_table(tables$TE
 ```
 
 Read from file instead
+
 ```{r}
 
 # Read plot files 
