@@ -29,7 +29,7 @@ library(scales, quietly = T)
 # Define query file and output folder
 
 ```{r}
-setwd(getwd())
+setwd("E:/Jose Luis/Documents/GitHub/SysBio_TissueEng_Review/Code")
 source("extra_functions.R")
 # Define directories
 query_file <- "../Data/queries.xlsx"

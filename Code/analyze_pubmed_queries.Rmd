@@ -27,7 +27,14 @@ source("extra_functions.R")
 # Define directories
 query_file <- "../Data/queries.xlsx"
 dir_out <- "../Results/"
+# Read tables with results from queries
 tables <- readRDS(file = paste0(dir_out, "query_tables.rds"))
+# Read query terms
+my_query_SB <- read_excel(query_file, sheet = "Modeling") %>% filter(!grepl("#", term))
+# Get tissue engineering and in vitro models query terms
+my_query_TE <- read_excel(query_file, sheet = "TissueEng") %>% filter(!grepl("#", term))
+# Get omic and high throughput measurement terms
+my_query_Omic <- read_excel(query_file, sheet = "Method") %>% filter(!grepl("#", term))
 ```
 
 ## Intersect PMID categories
@@ -150,35 +157,15 @@ verify_titles(tables_mixed[["TE_SB_gen"]]$PMID %>% unique(),
 
 ```
 
-Now check IDs retrieved from intersecting systems-bio and tissue-eng mesh headers.
-Some of these might have been checked in the previous two chunks, so we load those
-pre-checked files. PMC retrieves too many non-specific hits, so exclude
-
-```{r}
-# Do in chunks of 50 (although internally stuff is saved every 10 prompts)
-IDs <- tables[["PMID_extra"]]$PMID %>% unique()
-IDs <- setdiff(IDs, 
-               c(tables_mixed[["all_gen_PMC"]]$PMID, 
-                 tables_mixed[["all_gen"]]$PMID, 
-                 tables_mixed[["TE_SB_gen"]]$PMID))
-
-extra_all_gen_unique <- verify_titles(IDs,
-                      file_prechecked =  paste0(dir_out,"checkedID/extra_all_unique_checked.txt"),
-                      file_store = paste0(dir_out,"checkedID/extra_all_unique_checked.txt"),
-                      batch_size = 50)
-
-```
 Concatenate the selected PMIDs and export to text file. Then, paste to excel manually and 
 double-check papers for relevance
 
 ```{r}
 PMC_all_gen_unique$dataset <- "PMC"
 PMID_all_gen_unique$dataset <- "PMID"
-extra_all_gen_unique$dataset <- "extra"
 
 rbind(filter(PMID_all_gen_unique, is.good == "y" & is.review == FALSE),
-      filter(PMC_all_gen_unique, is.good == "y" & is.review == FALSE),
-      filter(extra_all_gen_unique, is.good == "y" & is.review == FALSE)) %>%
+      filter(PMC_all_gen_unique, is.good == "y" & is.review == FALSE)) %>%
   write.table(paste0(dir_out,'PMID_to_check.txt'), col.names = F, row.names = F, quote = F, sep = "\t")
 ```
 
@@ -222,7 +209,8 @@ clean_TE_table <- function(table){
 
 ```
 
-Producing a list of plots. These wrapper functions save the plots
+Producing a list of plots. These wrapper functions save the data structures that render the plot,
+but the actual plots are rendered in the following chunk
 
 ```{r}
 # Get overlaps between categories
@@ -256,11 +244,11 @@ overlaps_dis_PMC <- readRDS(paste0(dir_out, "/Plots/overlaps_dis_PMC.rds"))
 
 ```
 
+Created a small wrapper function that specifies plot size based on what will fit a page nicely
+
 ```{r}
 
 # Plot for the different reference queries that we overlapped
-
-
 # Wrapper function to avoid repeating stuff
 make_plots <- function(overlap_table, dir_out){
 
@@ -291,6 +279,7 @@ ggsave(paste0(dir_out,"SB_overlap.pdf"),
 
 
 # Reorder axes and save - lots of repetitive code that I could condense later
+
 ggsave(paste0(dir_out,"TE_Omic_overlap.pdf"), 
        plot = mod_axes(overlap_table[["TE_Omics"]][["plot"]], 
                        my_query_TE$category[my_query_TE$category != "Hydrogels"],
@@ -315,87 +304,11 @@ ggsave(paste0(dir_out,"Venn.pdf"),
        units = "cm", width = 7, height = 7)
 }
 
-# Make the plots
-make_plots(overlaps_dis, paste0(dir_out, "/Plots/PMID_dis/"))
-make_plots(overlaps_gen, paste0(dir_out, "/Plots/PMID_gen/"))
-make_plots(overlaps_dis_PMC, paste0(dir_out, "/Plots/PMC_dis/"))
-
-
-
+# Render plots and export pdf
+make_plots(overlaps_dis, paste0(dir_out,"Plots/PMID_dis/"))
+make_plots(overlaps_gen,paste0(dir_out,"Plots/PMID_gen/"))
+make_plots(overlaps_dis_PMC, paste0(dir_out,"Plots/PMC_dis/"))
 ```
 
 
-
-
-
-
-# Get abstracts of papers in the intersections with tissue eng
-
-We don't care as much about reviewing math modelling with Omic data
-
-```{r}
-ID_for_abstracts <- rbind(tables$TE_SB_dis,
-                          tables$TE_Omic_dis) %>% 
-                    group_by(PMID) %>%
-                    summarize(year = min(year))
-
-PMID_dis_abstracts <- get_title_abstract(ID_for_abstracts$PMID,
-                                save_name = paste0(dir_out,"PMID_title_abstract.txt"))
-# Add year info
-PMID_dis_abstracts <- merge(PMID_dis_abstracts, ID_for_abstracts, by = "PMID")
-write.table(PMID_dis_abstracts, paste0(dir_out,"PMID_title_abstract.txt"), quote = T, row.names = F, sep = "\t")
-```
-
-
-# For thesis - additional TE queries focused on PDAC or cancer only
-
-```{r}
-
-add_query_mod <- " AND (pancreatic[tiab] OR pancreas[tiab]) AND (adenocarcinoma[tiab] OR cancer[tiab] OR carcinoma[tiab]) NOT (review[pt] OR comment[pt] OR editorial[pt] OR systematic-review[pt] OR comparative-study[pt]) AND english[lang]"
-
-table_TE_PDAC <- get_queries_range(my_query_TE, add_query_mod, years, "table_TE_PDAC", dir_out = dir_out)
-
-add_query_mod <- " AND (cancer[tiab] OR carcinoma[tiab]) NOT (review[pt] OR comment[pt] OR editorial[pt] OR systematic-review[pt] OR comparative-study[pt]) AND english[lang]"
-
-table_TE_cancer <- get_queries_range(my_query_TE, add_query_mod, years, "table_TE_cancer", dir_out = dir_out)
-
-# Summarize counts in each category
-table_TE_merge <- merge(table_TE_PDAC %>% group_by(category) %>% summarize(PDAC = sum(!is.na(PMID))),
-                        table_TE_cancer %>% group_by(category) %>% summarize(Cancer = sum(!is.na(PMID))),
-                        by = "category")
-
-# Plot total counts
-plt_TE_PDAC <- table_TE_merge %>% 
-                pivot_longer(cols = c("PDAC", "Cancer"), names_to = "type", values_to = "count") %>%
-                filter(count > 0) %>%
-                ggplot(aes(x = as.factor(category), y = count, fill = as.factor(type))) +
-                  geom_col(position = "dodge2") +
-                  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
-                                labels = trans_format("log10", math_format(10^.x)),
-                                limits = c(1,10^4)) +
-                  labs(x = NULL, y = "PubMed articles", fill = NULL) +
-                  scale_fill_manual(values = c("gray", "steelblue")) +
-                  scale_x_discrete(limits = my_query_TE$category)
-
-plt_TE_PDAC <- add_theme(plt_TE_PDAC) #+ theme(axis.text.x = element_text(color = "black", angle = 0, hjust = 0))
-# Save
-ggsave(paste0(dir_out,"plot_TE_PDAC.pdf"), plot = plt_TE_PDAC, units = "cm", width = 19, height = 4)
-
-# Get overlap in categories
-TE_overlap_cancer <- get_queries_overlap(table_TE_cancer)
-plt_TE_overlap <- TE_overlap_cancer[["plot"]] +
-                  scale_y_discrete(limits = my_query_TE$category) +
-                  scale_x_discrete(limits = my_query_TE$category) +
-                  labs(size = "Jaccard index (%)")
-
-# Override theme
-plt_TE_overlap <- plt_TE_overlap +
-                  theme(text = element_text(size = size_text),
-                        axis.text.y = element_text(color = "black"),
-                        axis.text.x = element_text(color = "black", angle = 45, hjust = 1),
-                        legend.key.size = unit(size_legend, "cm")) 
-
-ggsave(paste0(dir_out,"plot_TE_overlap_thesis.pdf"), plot = plt_TE_overlap, units = "cm", width = 10, height = 8)
-
-```
 
