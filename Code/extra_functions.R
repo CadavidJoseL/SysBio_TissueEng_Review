@@ -2,16 +2,19 @@
 
 ### Load packages
 library(rentrez, quietly = T)
-library(tidyverse, quietly = T)
+library(stringr, quietly = T)
+library(dplyr, quietly = T)
+library(tidyr, quietly = T)
+library(ggplot2, quietly = T)
 library(RColorBrewer, quietly = T)
+library(ggvenn, quietly = T)
 
 # Handy infix function to concatenate long lines (for queries) into a single string
 # From https://stackoverflow.com/questions/6329962/split-code-over-multiple-lines-in-an-r-script
 `%+%` = function(x,y) return(paste0(x,y))
 
 
-# Add your API key if you have one
-# (https://ncbiinsights.ncbi.nlm.nih.gov/2017/11/02/new-api-keys-for-the-e-utilities/)
+# Read api key if it exists
 api_key <- "../Data/api_key.txt"
 if (file.exists(api_key)){
   api_key <- readChar(api_key, file.info(api_key)$size)
@@ -178,7 +181,7 @@ get_queries_range <- function(query_table, add_query, years, data_base = "pubmed
   months <- c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12")
   
   for (year in years){
-    print(year)
+    #print(year)
     for (cat in seq(1, nrow(query_table))){
       # Define query
       query <- query_table$term[cat]
@@ -504,15 +507,23 @@ get_PMID_PMC <- function(PMCs, do.clean = T){
 
 # We can only do batches of 300 at a time or so, so this function loops batches.
 # Could be a single function, but I think two functions is easier to read
-get_PMID_PMC_batched <- function(PMCs, do.clean = T, save_name = NULL){
-  # Remove IDs with 0 (tat come from empty queries)
+get_PMID_PMC_batched <- function(PMCs, do.clean = T, save_name = "../Data/dictionary.txt"){
+  # Remove IDs with 0 (that come from empty queries)
   PMCs <- PMCs[PMCs != "0"]
+  # Check if a dictionary is already in file. If yes, load and only process
+  # new IDs
+  if (file.exists(save_name)){
+    dictionary <- read.table(save_name, header = T)
+    PMCs <- PMCs[!(PMCs %in% dictionary$PMC)]
+    print("Previous file found")
+  } else {
+    dictionary = NULL
+  }
   # Pass chunks of 300 at a time
   batch_size <- 300
   numel <- length(PMCs)
   ii_min <- 1
   ii_max <- batch_size
-  dictionary <- NULL
   while (ii_min <= numel){
     # Cap ii_max
     ii_max <- min(ii_max, numel)
