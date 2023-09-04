@@ -298,10 +298,34 @@ ggsave(paste0(dir_out,"Omic_SB_overlap.pdf"),
                        my_query_Omic$category), 
        units = "cm", width = 12, height = 10)
 
-
+# Venn diagram intersecting main categories
 ggsave(paste0(dir_out,"Venn.pdf"), 
        plot = overlap_table[["Venn"]], 
        units = "cm", width = 7, height = 7)
+
+# Make additional plot for supp info: Dotplots summarizing the Jaccard index of the queries
+dummy <- rbind(data.frame(category = "TE", 
+                          overlap_table[["TE_TE"]][["table"]]),
+               data.frame(category = "MM", 
+                          overlap_table[["MM_MM"]][["table"]]),
+               data.frame(category = "Omics", 
+                          overlap_table[["Omics_Omics"]][["table"]]))
+# Remove duplicated pairs (A B = B A) and plot
+dummy$pairs <- apply(dummy, MARGIN = 1, 
+                     FUN = function(x){str_sort(c(x[2], x[3])) %>% paste(collapse = " ")})
+
+plt_histo <- dummy %>% 
+  filter(jaccard < 0.9999 & duplicated(pairs) & count_both > 0) %>% 
+  ggplot(aes(x = factor(category), y = 100*jaccard)) + 
+  geom_boxplot(outlier.alpha = 0, color = "black", size = size_line) +  
+  geom_jitter(width = 0.1, size = size_dot, color = "steelblue", alpha = 0.7) +
+  labs(x = NULL, y = "Jaccard indices (%)") + 
+  scale_x_discrete(labels = c("Math models", "Exp methods", "3D in vitro"))
+
+ggsave(paste0(dir_out,"Jaccard_dot.pdf"), 
+       plot = plt_histo, 
+       units = "cm", width = 7.5, height = 7)
+
 }
 
 # Render plots and export pdf
@@ -309,6 +333,3 @@ make_plots(overlaps_dis, paste0(dir_out,"Plots/PMID_dis/"))
 make_plots(overlaps_gen,paste0(dir_out,"Plots/PMID_gen/"))
 make_plots(overlaps_dis_PMC, paste0(dir_out,"Plots/PMC_dis/"))
 ```
-
-
-
